@@ -1,0 +1,356 @@
+name: 'AWS Terraform Action'
+description: 'Complete CI/CD for Terraform with AWS — fmt, validate, lint, docs, security scan, plan, and apply.'
+author: 'CloudNinjaDev'
+
+branding:
+  icon: 'cloud'
+  color: 'orange'
+
+inputs:
+  # ── Terraform tooling ────────────────────────────────────────────────────────
+  terraform_version:
+    description: 'Terraform version to install (e.g. "1.7.0" or "latest").'
+    required: false
+    default: 'latest'
+  tflint_version:
+    description: 'TFLint version to install (e.g. "v0.50.0" or "latest").'
+    required: false
+    default: 'latest'
+  terraform_docs_version:
+    description: 'terraform-docs version to install (e.g. "v0.17.0" or "latest").'
+    required: false
+    default: 'latest'
+
+  # ── Working directory ────────────────────────────────────────────────────────
+  working_directory:
+    description: 'Directory that contains the Terraform root module.'
+    required: false
+    default: '.'
+
+  # ── CI gates ─────────────────────────────────────────────────────────────────
+  run_fmt:
+    description: 'Run `terraform fmt -check` to enforce formatting.'
+    required: false
+    default: 'true'
+  run_validate:
+    description: 'Run `terraform validate` against the configuration.'
+    required: false
+    default: 'true'
+  run_lint:
+    description: 'Run TFLint for additional linting rules.'
+    required: false
+    default: 'true'
+  run_docs:
+    description: 'Generate / verify Terraform module documentation with terraform-docs.'
+    required: false
+    default: 'false'
+  docs_push:
+    description: |
+      When run_docs=true, push the generated README.md back to the branch.
+      Set to "false" to only verify docs are current (CI mode).
+    required: false
+    default: 'false'
+  run_security_scan:
+    description: 'Run Checkov security and compliance scan (soft-fail).'
+    required: false
+    default: 'true'
+
+  # ── CD gates ─────────────────────────────────────────────────────────────────
+  run_plan:
+    description: 'Run `terraform plan`.'
+    required: false
+    default: 'false'
+  run_apply:
+    description: 'Run `terraform apply`.'
+    required: false
+    default: 'false'
+  auto_approve:
+    description: 'Pass `-auto-approve` to `terraform apply`.'
+    required: false
+    default: 'false'
+
+  # ── AWS credentials ───────────────────────────────────────────────────────────
+  aws_region:
+    description: 'AWS region (required when any AWS operations are performed).'
+    required: false
+    default: 'us-east-1'
+  aws_access_key_id:
+    description: 'AWS Access Key ID (leave empty when using OIDC).'
+    required: false
+    default: ''
+  aws_secret_access_key:
+    description: 'AWS Secret Access Key (leave empty when using OIDC).'
+    required: false
+    default: ''
+  aws_session_token:
+    description: 'AWS Session Token for temporary credentials.'
+    required: false
+    default: ''
+  role_to_assume:
+    description: 'ARN of the IAM role to assume via OIDC.'
+    required: false
+    default: ''
+
+  # ── Terraform run options ─────────────────────────────────────────────────────
+  backend_config:
+    description: 'Comma-separated list of backend config values (e.g. "bucket=my-bucket,key=tfstate").'
+    required: false
+    default: ''
+  var_file:
+    description: 'Path to a tfvars file passed to plan / apply.'
+    required: false
+    default: ''
+  extra_args:
+    description: 'Additional arguments appended to terraform plan / apply commands.'
+    required: false
+    default: ''
+
+  # ── PR integration ────────────────────────────────────────────────────────────
+  comment_on_pr:
+    description: 'Post a summary comment on the pull request when triggered by a PR event.'
+    required: false
+    default: 'true'
+  github_token:
+    description: 'GitHub token used to post PR comments. Pass ${{ secrets.GITHUB_TOKEN }} or ${{ github.token }}.'
+    required: false
+    default: ''
+
+outputs:
+  fmt_outcome:
+    description: 'Result of the terraform fmt step (success | failure | skipped).'
+    value: ${{ steps.fmt.outcome }}
+  validate_outcome:
+    description: 'Result of the terraform validate step (success | failure | skipped).'
+    value: ${{ steps.validate.outcome }}
+  lint_outcome:
+    description: 'Result of the tflint step (success | failure | skipped).'
+    value: ${{ steps.lint.outcome }}
+  plan_outcome:
+    description: 'Result of the terraform plan step (success | failure | skipped).'
+    value: ${{ steps.plan.outcome }}
+  apply_outcome:
+    description: 'Result of the terraform apply step (success | failure | skipped).'
+    value: ${{ steps.apply.outcome }}
+  plan_output:
+    description: 'Text output produced by terraform plan.'
+    value: ${{ steps.plan_output.outputs.content }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ── 1. Setup Terraform ───────────────────────────────────────────────────────
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform_version }}
+        terraform_wrapper: true
+
+    # ── 2. Configure AWS credentials ─────────────────────────────────────────────
+    - name: Configure AWS Credentials
+      if: >-
+        inputs.aws_access_key_id != '' ||
+        inputs.role_to_assume != ''
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: ${{ inputs.aws_region }}
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-session-token: ${{ inputs.aws_session_token }}
+        role-to-assume: ${{ inputs.role_to_assume }}
+
+    # ── 3. Terraform fmt ─────────────────────────────────────────────────────────
+    - name: Terraform Format Check
+      id: fmt
+      if: inputs.run_fmt == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform fmt -check -recursive
+      continue-on-error: false
+
+    # ── 4. Terraform init ────────────────────────────────────────────────────────
+    - name: Terraform Init
+      id: init
+      if: >-
+        inputs.run_validate == 'true' ||
+        inputs.run_plan    == 'true'  ||
+        inputs.run_apply   == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        INIT_ARGS=()
+        if [[ -n "${{ inputs.backend_config }}" ]]; then
+          IFS=',' read -ra CFGS <<< "${{ inputs.backend_config }}"
+          for cfg in "${CFGS[@]}"; do
+            INIT_ARGS+=("-backend-config=${cfg}")
+          done
+        fi
+        terraform init "${INIT_ARGS[@]}"
+
+    # ── 5. Terraform validate ────────────────────────────────────────────────────
+    - name: Terraform Validate
+      id: validate
+      if: inputs.run_validate == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform validate -no-color
+
+    # ── 6. TFLint ────────────────────────────────────────────────────────────────
+    - name: Setup TFLint
+      if: inputs.run_lint == 'true'
+      uses: terraform-linters/setup-tflint@v4
+      with:
+        tflint_version: ${{ inputs.tflint_version }}
+
+    - name: TFLint Init
+      id: lint_init
+      if: inputs.run_lint == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: tflint --init
+
+    - name: TFLint Run
+      id: lint
+      if: inputs.run_lint == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: tflint --format compact --recursive
+
+    # ── 7. terraform-docs ────────────────────────────────────────────────────────
+    - name: Setup terraform-docs
+      if: inputs.run_docs == 'true'
+      uses: terraform-docs/gh-actions@v1
+      with:
+        working-dir: ${{ inputs.working_directory }}
+        output-file: README.md
+        output-method: inject
+        git-push: ${{ inputs.docs_push }}
+
+    # ── 8. Checkov security scan ─────────────────────────────────────────────────
+    - name: Checkov Security Scan
+      id: checkov
+      if: inputs.run_security_scan == 'true'
+      uses: bridgecrewio/checkov-action@v12
+      with:
+        directory: ${{ inputs.working_directory }}
+        soft_fail: true
+        quiet: true
+        output_format: cli
+
+    # ── 9. Terraform plan ────────────────────────────────────────────────────────
+    - name: Terraform Plan
+      id: plan
+      if: inputs.run_plan == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        PLAN_ARGS=()
+        if [[ -n "${{ inputs.var_file }}" ]]; then
+          PLAN_ARGS+=("-var-file=${{ inputs.var_file }}")
+        fi
+        if [[ -n "${{ inputs.extra_args }}" ]]; then
+          read -ra EXTRA <<< "${{ inputs.extra_args }}"
+          PLAN_ARGS+=("${EXTRA[@]}")
+        fi
+        terraform plan -no-color -out=tfplan_${GITHUB_RUN_ID} "${PLAN_ARGS[@]}" 2>&1 | tee "$RUNNER_TEMP/plan_output_${GITHUB_RUN_ID}.txt"
+        echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        echo "plan_file=tfplan_${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      continue-on-error: true
+
+    - name: Read Plan Output
+      id: plan_output
+      if: inputs.run_plan == 'true'
+      shell: bash
+      run: |
+        if [[ -f "$RUNNER_TEMP/plan_output_${GITHUB_RUN_ID}.txt" ]]; then
+          {
+            echo 'content<<PLAN_EOF'
+            cat "$RUNNER_TEMP/plan_output_${GITHUB_RUN_ID}.txt"
+            echo 'PLAN_EOF'
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+    # ── 10. Post PR comment ──────────────────────────────────────────────────────
+    - name: Post PR Comment
+      if: >-
+        inputs.comment_on_pr == 'true' &&
+        github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      env:
+        FMT_OUTCOME: ${{ steps.fmt.outcome }}
+        VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+        LINT_OUTCOME: ${{ steps.lint.outcome }}
+        PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        PLAN_OUTPUT: ${{ steps.plan_output.outputs.content }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const fmtOutcome      = process.env.FMT_OUTCOME;
+          const validateOutcome = process.env.VALIDATE_OUTCOME;
+          const lintOutcome     = process.env.LINT_OUTCOME;
+          const planOutcome     = process.env.PLAN_OUTCOME;
+          const planOutput      = process.env.PLAN_OUTPUT || '';
+
+          const icon = (o) => o === 'success' ? '✅' : o === 'failure' ? '❌' : o === 'skipped' ? '⏭️' : '❔';
+
+          const body = [
+            '## Terraform CI/CD Summary',
+            '',
+            `| Step | Result |`,
+            `|------|--------|`,
+            `| Format (fmt) | ${icon(fmtOutcome)} \`${fmtOutcome}\` |`,
+            `| Validate | ${icon(validateOutcome)} \`${validateOutcome}\` |`,
+            `| Lint (tflint) | ${icon(lintOutcome)} \`${lintOutcome}\` |`,
+            `| Plan | ${icon(planOutcome)} \`${planOutcome}\` |`,
+            '',
+            planOutput ? `<details><summary>📋 Terraform Plan Output</summary>\n\n\`\`\`hcl\n${planOutput}\n\`\`\`\n</details>` : '',
+          ].join('\n');
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const botComment = comments.find(c =>
+            c.user.type === 'Bot' && c.body.includes('## Terraform CI/CD Summary')
+          );
+
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+          }
+
+    # ── 11. Terraform apply ──────────────────────────────────────────────────────
+    - name: Terraform Apply
+      id: apply
+      if: inputs.run_apply == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        APPLY_ARGS=()
+        if [[ "${{ inputs.auto_approve }}" == "true" ]]; then
+          APPLY_ARGS+=("-auto-approve")
+        fi
+        if [[ -f "tfplan_${GITHUB_RUN_ID}" ]]; then
+          terraform apply "${APPLY_ARGS[@]}" "tfplan_${GITHUB_RUN_ID}"
+        else
+          if [[ -n "${{ inputs.var_file }}" ]]; then
+            APPLY_ARGS+=("-var-file=${{ inputs.var_file }}")
+          fi
+          if [[ -n "${{ inputs.extra_args }}" ]]; then
+            read -ra EXTRA <<< "${{ inputs.extra_args }}"
+            APPLY_ARGS+=("${EXTRA[@]}")
+          fi
+          terraform apply "${APPLY_ARGS[@]}"
+        fi
