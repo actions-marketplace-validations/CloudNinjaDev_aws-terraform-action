@@ -171,7 +171,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: terraform fmt -check -recursive
-      continue-on-error: false
 
     # ── 4. Terraform provider cache ──────────────────────────────────────────────
     - name: Create Terraform Plugin Cache Dir
@@ -286,7 +285,6 @@ runs:
         terraform plan -no-color -out=tfplan_${GITHUB_RUN_ID} "${PLAN_ARGS[@]}" 2>&1 | tee "$RUNNER_TEMP/plan_output_${GITHUB_RUN_ID}.txt"
         echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         echo "plan_file=tfplan_${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
-      continue-on-error: true
 
     - name: Read Plan Output
       id: plan_output
