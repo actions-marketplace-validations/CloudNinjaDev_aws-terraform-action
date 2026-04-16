@@ -7,6 +7,12 @@
 
 [![Test Action](https://github.com/CloudNinjaDev/aws-terraform-action/actions/workflows/test.yml/badge.svg)](https://github.com/CloudNinjaDev/aws-terraform-action/actions/workflows/test.yml)
 
+<div align="center">
+  <a href="https://github.com/sponsors/CloudNinjaDev">
+    <img src="https://img.shields.io/badge/Sponsor-♥-ff69b4?style=for-the-badge&logo=github-sponsors" alt="Sponsor CloudNinjaDev">
+  </a>
+</div>
+
 ---
 
 ## Features
@@ -193,6 +199,7 @@ jobs:
 | `backend_config` | Comma-separated backend config values | `""` |
 | `var_file` | Path to tfvars file | `""` |
 | `extra_args` | Extra arguments for plan/apply | `""` |
+| `cache_plugins` | Cache Terraform providers and TFLint plugins to speed up subsequent runs | `true` |
 | `comment_on_pr` | Post summary comment on PR | `true` |
 | `github_token` | GitHub token for PR comments | `""` (pass `secrets.GITHUB_TOKEN`) |
 
@@ -206,6 +213,25 @@ jobs:
 | `plan_outcome` | `terraform plan` step result |
 | `apply_outcome` | `terraform apply` step result |
 | `plan_output` | Full text output of `terraform plan` |
+
+---
+
+## Caching
+
+By default (`cache_plugins: 'true'`), the action caches:
+
+| Cache | Path | Cache key |
+|-------|------|-----------|
+| Terraform providers | `~/.terraform.d/plugin-cache` | OS + Terraform version + `.terraform.lock.hcl` hash |
+| TFLint plugins | `~/.tflint.d/plugins` | OS + TFLint version + `.tflint.hcl` hash |
+
+Caching is transparent — providers and plugins are restored on cache hit or downloaded and saved on cache miss. Disable it by setting `cache_plugins: 'false'`.
+
+```yaml
+- uses: CloudNinjaDev/aws-terraform-action@v1
+  with:
+    cache_plugins: 'false'   # disable caching
+```
 
 ---
 
