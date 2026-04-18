@@ -200,9 +200,10 @@ runs:
         inputs.run_apply   == 'true'
       shell: bash
       working-directory: ${{ inputs.working_directory }}
-      env:
-        TF_PLUGIN_CACHE_DIR: ${{ inputs.cache_plugins == 'true' && '~/.terraform.d/plugin-cache' || '' }}
       run: |
+        if [[ "${{ inputs.cache_plugins }}" == "true" ]]; then
+          export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
+        fi
         INIT_ARGS=()
         if [[ -n "${{ inputs.backend_config }}" ]]; then
           IFS=',' read -ra CFGS <<< "${{ inputs.backend_config }}"
